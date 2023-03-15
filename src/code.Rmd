@@ -1,0 +1,647 @@
+---
+title: 'Descriptive and Predictive Data: Final Exam Report'
+author: "Quang Phong - 6286943"
+date: '2022-06-10'
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = normalizePath("D:/OneDrive/1st-goal-innovation/project-descriptive-predictive-data/final"))
+```
+
+# DATA LOADING AND UNDERSTANDING
+
+```{r}
+# Load data
+load("gamedata.Rdata")
+```
+
+```{r}
+# Rename the data frame as "df_Game" for name convention consistency
+df_Game <- gamedata
+rm(gamedata)
+```
+
+```{r}
+# Have a quick look at the data
+head(df_Game)
+```
+
+# QUESTION 1 
+
+```{r}
+# Print summary statistics of all variables in the dataset
+summary(df_Game)
+str(df_Game)
+```
+
+**Comment:** 
+- There are 10 variables in this dataset of 60000 observations.
+- Categorical variables include: genre, motivation, type, gender, dummydecember. They have finite values.
+- Continuous variables include: spending, income.
+- Discrete variables are: monthindex, playerindex, age. Technically, if age takes any value (e.g., 15.78 years old), it is considered continuous. However, here age only takes integer values, so it is considered discrete variable.
+- The youngest person in the research period was 18 years old at the beginning, and the oldest turned 55 at the end. 
+- 60% of the players are male and 40% are female, which is quite a balanced ratio.
+
+
+```{r}
+# Convert categorical to factors
+df_Game$dummydecember <- as.factor(df_Game$dummydecember)
+df_Game$genre <- as.factor(df_Game$genre)
+df_Game$motivation <- as.factor(df_Game$motivation)
+```
+
+```{r}
+# Check the types of variables again
+str(df_Game)
+```
+
+**Comment:** 
+- Now each variable has been assigned to its correct data type.
+
+
+```{r}
+# Check the number of gamers
+length(unique(df_Game$playerindex))
+```
+
+**Comment:** 
+There are 500 games in the dataset.
+
+
+```{r}
+# Check the number of months
+length(unique(df_Game$monthindex))
+```
+
+**Comment:** 
+There are 120 months, corresponding to 10 years in the dataset.
+
+
+# QUESTION 2  
+
+## 2A 
+
+```{r}
+# Choose all time series data for gamer ID 1 [INCOME, SPENDING]
+df_Gamer1 <- df_Game[which(df_Game$playerindex == 1), ]
+```
+
+```{r}
+# Print summary of the selected dataset
+summary(df_Gamer1)
+```
+
+```{r}
+# Plot the spending of this gamer over 10 years
+plot(df_Gamer1$spending, type = "l")
+```
+
+**Comment on the characteristics of this gamer:**
+- This player is a female, belonging to 40% female players in 500 players here.
+- She was 19 years old at the start of the research period and became 29 at the end. This means she was younger than an average player in this data set.
+- Motivation to play of this player was always for destruction, which is different from the majority of observations in the dataset who has competition motivation.
+- She never played any game of social type, which is unlike the majority of observations in the dataset who likes to play social games.
+- In terms of mean income, she earned 1963, 24.6% less than the average of all players (2602).
+- Regarding mean spending, she spent 132.5, 64.3% less than the average of all players (371.3).
+- Looking at the plot of spending, we can see the amount of money she spent on gaming fluctuated and did not stay the same for every month. It seemed to have a seasonality of 12 months.
+
+## 2B 
+
+```{r, warning = FALSE}
+# Step 1: Check the stationarity of the spending data for gamer 1
+library(tseries)
+adf.test(df_Gamer1$spending)
+kpss.test(df_Gamer1$spending)
+```
+
+**Comment:**
+- We reject Null Hypothesis (H0: the time series is non-stationary) in Unit Root Test (ADF Test) because the p-value = 0.01 < 0.05.
+- Also, we cannot reject Null Hypothesis (H0: the time series is stationary) in KPSS Test as the p-value = 0.1 > 0.05.
+- Therefore, both of the tests support that the spending over time for gamer 1 is stationary over time.
+
+```{r}
+# Step 2: Check the seasonality
+
+# Regarding time series properties of gamer 1's spending, initially, we will again look at the plot of spending for that player
+plot(df_Gamer1$spending, type = "l")
+```
+
+**Comment:**
+- By simply looking at this plot, I estimate that there can be seasonality of 12 months, but possibly no trend.
+
+```{r}
+# To corroborate this estimation, I will plot the monthly means of spending of this player over 10 years
+
+# Let's create month of year variable so that we can group by month of year later
+library("dplyr")
+df_Gamer1$monrhOfYear <- ifelse(as.numeric(df_Gamer1$monthindex) %% 12 != 0,
+                                as.numeric(df_Gamer1$monthindex) %% 12,
+                                12)
+plot(df_Gamer1 %>% 
+       group_by(monrhOfYear) %>%
+       summarise(sum = sum(spending)),
+     type = "l")
+```
+
+**Comment:** 
+- As seen from the graph, the average spending in month 12 of 10 years year is higher than the rest.
+
+```{r}
+# However, additional statistical evidence must be exhibited.
+
+# Then I will look at ACF and PACF plots.
+acf(df_Gamer1$spending, lag.max = 120)
+pacf(df_Gamer1$spending, lag.max = 120)
+
+```
+
+**Comment:** 
+- It is easy to see the existence of autocorrelation between lagged spendings here, illustrated by the lines passing the threshold.
+- From the ACF and PACF plots, it can be concluded there is a seasonality of 12 months in the spending of this gamer.
+- In details, the autocorrelation at lag 12 is significantly high and gradually geometrically decays at lag 24, 36, 48, 60, etc. Also, we have high partial autocorrelation at lag 12.
+- Therefore, it is likely that we have seasonal AR (ARIMA (0,0,0),(1,0,0)12) model for this spending of player 1.
+
+
+```{r}
+# Step 3: Check the trend
+
+# First, I will plot the annual spending of gamer 1.
+# Let's create year variable so that we can group by year later
+df_Gamer1$year <- (as.numeric(df_Gamer1$monthindex)-1) %/% 12 + 1
+
+plot(df_Gamer1 %>% 
+       group_by(year) %>%
+       summarise(sum = sum(spending)),
+     type = "l")
+```
+
+**Comment:**
+- The spending decreased after 10 years, but there is no consistent downwards trend over time.
+
+```{r}
+# Second, we can further check the trend by regression
+model1 <- lm(df_Gamer1$spending ~ df_Gamer1$monthindex)
+summary(model1)
+```
+
+**Comment:**
+- As the impact of monthindex on spending is not statistically significant, there is no trend in the data for gamer 1.
+
+## 2C
+
+```{r}
+# Print summary of the selected dataset
+summary(df_Gamer1)
+```
+
+**Comment:**
+- This player is a female, belonging to 40% female players in 500 players here.
+- She was 19 years old at the start of the research period and became 29 at the end. This means she was younger than an average player in this data set.
+- Motivation to play of this player was always for destruction, which is different from the majority of observations in the dataset who has competition motivation.
+- She never played any game of social type, which is unlike the majority of observations in the dataset who likes to play social games.
+- In terms of mean income, she earned 1963, 24.6% less than the average of all players (2602).
+- Regarding mean spending, she spent 132.5, 64.3% less than the average of all players (371.3).
+- Looking at the plot of spending, we can see the amount of money she spent on gaming fluctuated and did not stay the same for every month. It seemed to have a seasonality of 12 months.
+
+*Variables that change over time*: spending, income, genre, age
+
+```{r}
+# Plot each variable over time for gamer 1 (only changing variables)
+plot(df_Gamer1$spending, type = "l")
+plot(df_Gamer1$income, type = "l")
+plot(df_Gamer1$genre, type = "l")
+plot(df_Gamer1$age, type = "l")
+```
+
+## 2D
+
+```{r}
+# Estimate a regression model
+model2 <- lm(spending ~ income + genre +  age + dummydecember - 1, data = df_Gamer1)
+summary(model2)
+```
+
+**Comment:**
+- Based on the results, there are 4 variables that statistically significantly explain the spending of gamer 1.
+- dummydecember has a positive effect on the spending with p-value < 0.05. In December, the player invested on average 51.64 higher than each of the other months, keeping other variables constant.
+- genre also has significant effects on the spending with p-value < 0.05. The player spends most when playing misc genre, followed by simulation, puzzle, strategy, platform, and finally shooter.
+- Income also has a positive effect on the spending although the magnitude is small (0.01)
+- Lastly, age has a negative effect at 0.05 significant level. 
+- The Adjusted R-squared of the model is 0.8546, which means the model is able to explains 85.5% the variance of player 1's spending over 120 months.
+
+
+## 2E
+
+There are several disadvantages of an "average regression" instead of multi-level regression analysis.
+
+- First, because we take average of every explanatory variables and also the explained variable, there will be information loss. For example, the increases and decreases in one variable after a period of all players can balance each others, resulting in an average variable that did not change much over time. Also here, we are interested in the effects of lagged spending variables, and we also see the seasonality in spending of gamer 1. But if we do use average spending of all players, it can be harder to detect them as there will be more noises, except for the case where all players share the same seasonality patterns.
+- Second, without multi-level regression analysis, it is challenging to take into account the behaviors of some players. For example, here gamer 1 spent 63.4% less than the average. If it is smaller, the average regression will be leaned to the bigger variances in spending of other players with higher spending.
+- Third, a disadvantage of this "average regression" is that you cannot use time-invariant variables to explain the spending. For example, the gender of the "average player" will be fixed over time, so it will not be included in an "average model". The average model will be for a fixed gender of "0.4 female, 0.6 male" and does not take into account possible effects of different genders on spendings. However, if we makes several typical profiles and run regression for each, we can compare and see the effects of these unique characteristics of a group on spending.
+- Therefore, it is better to divide our players to several groups (typical profiles) based on genders, motivation, etc. then run different regression models for these groups.
+
+# QUESTION 3
+
+## 3A
+
+```{r}
+# Choose time series data for gamer ID 500
+df_Gamer500 <- df_Game[which(df_Game$playerindex == 500), ]
+
+# Print summary of the selected dataset
+summary(df_Gamer500)
+
+# Plot the spending of this gamer over 10 years
+plot(df_Gamer500$spending, type = "l")
+```
+
+**Comment on the characteristics of this gamer:**
+
+- This player is a male, one among 60% male players in 500 players here.
+- He was 42 years old at the start of the research period and became 52 at the end. This means he was older than an average player in this data set.
+- The motivation to play of this player was always for competition, which is similar to the majority of observations in the dataset.
+- He always played games of social type, which is like the majority of observations in the dataset who likes to play social games.
+- In terms of mean income, he earned 2985, 14.7% higher than the average of all players (2602).
+- Regarding mean spending, he spent 603.8, 62.6% higher than the average of all players (371.3).
+- Looking at the plot of spending, we can see the amount of money he spent on gaming fluctuated and did not stay the same for every month. There seems to be a seasonality of 12 months in his spending as well.
+
+- Compared to player 1, player 500 had a completely opposite profile. He differs in gender, age cohort, has higher income, higher spending on game, plays different game type, and has different motivation to play. 
+- This is why basing the analysis on these two gamers is more beneficial.
+- We can understand and determine which factors lead to changes in monthly spending on games for two different customer profiles instead of one, which gives us a bigger picture, better forecasting and more insights into what to do for each customer segment to boost spending.
+- More importantly, by analyzing the 2 games, we can examine inter-dependency of their spendings and mutual effects of explanatory variables on the spendings at a given time. For example, there can be negative correlation between monthly spending of player 1 and player 500, which cannot be explored without analyzing the time series at the same time.
+
+## 3B
+
+```{r, warning = FALSE}
+# First, we need to check stationarity conditions for both 2 time series.
+# Because VAR is an extension of AR model which also requires stationarity conditions.
+
+# As we already check it for gamer 1, now we will check the stationarity of the spending data for gamer 500
+adf.test(df_Gamer500$spending)
+kpss.test(df_Gamer500$spending)
+```
+
+**Comment:**
+- We reject Null Hypothesis in Unit Root Test (ADF) as the p-value = 0.01 < 0.05(H0: the time series is non-stationary).
+- Also, we cannot reject Null Hypothesis in KPSS Test as the p-value = 0.1 > 0.05 (H0: the time series is stationary).
+- Therefore, both of the tests support that the spending over time for gamer 500 is stationary.
+
+- In conclusion, we do not need differencing calculation to apply VAR for these time series
+
+
+```{r}
+# Second, estimate VAR(1) for the spendings of 2 gamers without explanatory variables
+# Create a data frame that has variables of 2 gamers over time
+df_2gamers <- df_Gamer1 %>%
+  inner_join(df_Gamer500, by = "monthindex", suffix = c("1", "500"))
+
+colnames(df_2gamers)[which(names(df_2gamers) == "dummydecember1")] <- "dummydecember"
+
+# Make it time series data frame
+ts_2gamers <- ts(df_2gamers)
+```
+
+
+```{r}
+library(vars)
+
+# VAR(1) model without any explanatory variables:
+# The reason "none" is chosen instead of "const" is because "const" leads to very negative r-square.
+model3 <- VAR(ts_2gamers[, c("spending1", "spending500")], p=1, type="none")
+summary(model3)
+```
+
+**Comment on the estimation results:**
+
+- Lagged (1) spending of gamer 500 plays an important role in predicting both players' spending at time t.
+- Lagged (1) spending of gamer 500 has a statistically significant (p-value ~ 0) positive correlation with spending of gamer 1 at time t, with a fair estimate (0.24).
+- However, lagged (1) spending of gamer 1 cannot help predict her spending at time t.
+- Adjusted R-Square of the model is 0.9622, which is very high.
+
+- Lagged (1) spending of gamer 500 has a statistically significant (p-value ~ 0) positive correlation with his spending at time t, with a very big estimate (0.997).
+- Lagged (1) spending of gamer 1 cannot help predict the spending of gamer 500 at time t.
+- Adjusted R-Square of the model is 0.9954, which is very high.
+
+
+
+## 3C
+
+```{r}
+# VAR(1) with explanatory variables:
+# We will include genre1, genre500, income1, income500, age1, age500, dummydecember
+model5 <- VAR(ts_2gamers[, c("spending1", "spending500", "genre1", "genre500", "income1", 
+                             "income500", "age1", "age500", "dummydecember")], p=1, type="none")
+summary(model5)
+```
+
+**Comment:**
+- Lagged (1) age of gamer 500 plays an important role in predicting both players' spending at time t. It has positive influence on the spendings of gamer 1 and gamer 500. One unit change of it is associated with 23.46 change in spending of player 500 at significant level of 0.001, keeping other variables constant. One unit change of it is associated with 5.85 change in spending of player 1 at significant level of 0.05, keeping other variables constant. 
+- Also, lagged (1) age of gamer 1 is negatively related to spending of gamer 500, at significant level of 0.001, with an estimate of -23.16.
+- For spending of player 500, his genre of games is negatively correlated with his spending, with an estimate of -3.39, at significant level of 0.05.
+- More importantly, lagged (1) spending of each gamer is not statistically associated with both players' spending at time t anymore. 
+- Adjusted R-Square of the 2 models for spending 1 and spending 500 are 0.9689 and 0.9976, which are very high.
+
+
+```{r}
+# To compare this model to the one in question 3B, we will use BIC.
+BIC(model3)
+BIC(model5)
+```
+
+**Comment:**
+- VAR(1) model in question 3B uses fewer parameters to explain the changes in spending of 2 players, but still has high adjusted R-Square, so it has lower BIC. Therefore, it fits the data better.
+
+## 3D
+
+For Granger causality, we will examine significant variables in question 3B and 3C
+
+```{r}
+# For model in question 3B
+causality(model3, cause = "spending500")$Granger
+```
+
+**Comment:** p-value ~ 0 < 0.05 --> We reject H0. We conclude that spending500 Granger-causes spending1.
+
+```{r}
+# For model in question 3C
+causality(model5, cause = "dummydecember")$Granger
+causality(model5, cause = "age1")$Granger
+causality(model5, cause = "age500")$Granger
+causality(model5, cause = "genre500")$Granger
+```
+
+**Comment:** 
+- For dummydecember, p-value = 0.047 < 0.05. We reject H0. We conclude that dummydecember Granger-causes the changes of the other variables.
+- For age1, p-value ~ 0 < 0.05. We reject H0. We conclude that age1 Granger-causes the changes of the other variables.
+- For age500, p-value ~ 0 < 0.05. We reject H0. We conclude that age500 Granger-causes the changes of the other variables.
+- For genre500, p-value = 0.3161 > 0.05. We cannot reject H0. We conclude that genre does not Granger-cause the changes of the other variables.
+
+
+```{r}
+# To see if these gamers potentially belong to a gamer group where they play the same games
+# We can apply Chi Square test
+chisq.test(df_2gamers$genre1, df_2gamers$genre500, correct = FALSE)
+```
+
+**Comment:** Because p-value is 0.0419 < 0.05, so we reject null hypothesis (The two variables are independent). We conclude that the 2 genres of games that player1 and player500 play are related to each other. They belong to the same group in terms of this.
+
+
+## 3E
+
+- The number of parameters to be estimated in model3 (question 3B) (lag 1, without intercept, without explanatory variables, without error terms) is: 2*2 = 4 (parameters).
+
+- The number of parameters to be estimated in model5 (question 3C) (lag 1, without intercept, with explanatory variables, without error terms) is: 9*9 = 81 (parameters).
+
+
+
+## 3F
+
+Pros and cons of selecting 2 gamers as representative gamers in a VAR model instead of analyzing 500 gamers at the same time in a VAR model. 
+
+**Pro:**
+- 2 players belong to the same group where they play the same game patterns over time. Therefore, the spending of player 1 and spending of player 500 can be dependent on each other. This is not the case for all 500 players. So if we include all of them, we will likely have more noises.
+- It is less likely to be overfitting and less likely to suffer from the curse of dimensionality. When we include 500 players, we will have (4\*500+1)\*(4\*500+1) = 4004001 parameters (lag 1 for spending, income, genre, age, dummydecember, without intercept). It is a rule of thumb that require minimum 10 observations per predictor, which is minimum number of 4004001*10 = 40040010 observations. Meanwhile, we only have 60000 observations for 500 players. 
+- It is easier and more intuitive for interpretation than for 500 variables. 
+- It is simpler for estimation.
+- It will require faster runtime.
+
+**Cons:** 
+- It does not take into account the effects of possible other players' spendings and explantory variables. It is high chance that the spending of player 1 does not just depend on player 500, also on some of the others of the same group.
+
+
+# QUESTION 4
+
+## 4A
+```{r}
+library(plm)
+library(graphics)
+library(gplots)
+```
+
+```{r}
+# create panel data index, make it a panel data frame
+pn_Game <- pdata.frame(df_Game, index = c("playerindex", "monthindex"))
+```
+
+```{r}
+# Plot the spending data with respect to genres
+plotmeans(spending ~ genre, data=pn_Game, main = "Heterogeineity across genres")
+```
+
+**Comment:** Spending differs between the genre of games that are played. It is on average the highest for misc genre, followed by simulation, puzzle, platform, strategy and finally shooter.
+
+## 4B
+
+```{r}
+# Individual fixed effects model
+modelFixed1 <- plm(spending ~ income + genre +  age + dummydecember + motivation + type + gender
+                   , data = pn_Game, 
+                     model = "within", effect = "individual")
+print(summary(fixef(modelFixed1)))
+summary(modelFixed1)
+```
+
+**Comment:**
+- Fixed effects of all variables  are all significantly different from 0 because the F-test is significant with p-value = 2.22e-16, lower than 0.05.
+- All individuals have different intercepts.
+
+
+
+
+Now, let us go further and isolate the effects of monthindex on spending.
+
+```{r}
+# Monthindex fixed effects model
+modelFixed2 <- plm(spending ~ income + genre +  age + dummydecember + motivation + type + gender
+                   , data = pn_Game, 
+                     model = "within", effect = "time")
+
+# Effect of monthindex on spending
+summary(fixef(modelFixed2, type = "dmean"))
+```
+
+**Comment:**
+- We can see that monthindex 12, 24, 36, 48, 60, 72, 84, 96, 108, 120 are significant at 0.001 level, which mean spending across individuals are higher than usual.
+
+
+## 4C
+- Similar to model in question 2, all the coefficients in model 4B are also statistically significant.
+- Compared to the model in question 2, the estimates here show some differences, for example the estimate for age. Here is more generalized, and are the remainders after considering the dummy variable for each individual. The older the player is, the more he/she spends on gaming. In question 2, the model is only applied to player 1, so the older the player 1, the less she spends on gaming. The estimates differ in terms of interpretation. 
+
+- The first advantage of this panel data model to the representative individual model is that we can use this to predict spending for every single player rather than just the first player.
+- Also, we can see 2 different types of effects: common effects shared between all players of explanatory variables on spending, and individual effects for each players.
+- Last, we can also include variables like motivation, type of game, etc. in panel data model easier, which might not be the case for individual. For example, for player 1, we cannot include motivation, type, and gender because these variables are fixed for that player.
+
+
+## 4D
+
+```{r}
+# Estimate a random effects model 
+modelRandom1 <- plm(spending ~ income + genre +  age + dummydecember 
+                    + motivation + type + gender, data = pn_Game, 
+                   model = "random", effect = "individual", random.method = "amemiya")
+print(summary(modelRandom1))
+ranef(modelRandom1)
+```
+
+
+**Comment:**
+- In the case of 4B, we are accounting for fixed effects (or spending independent of time), while the model here is accounting for random effects (including time).
+- All individuals have different intercepts.
+- Effects of all variables here are all significantly different from 0 because the F-test is significant with p-value = 2.22e-16, lower than 0.0. However, looking at the p-value of typesocial, it is not significant as it is 0.5, larger than 0.05.
+- The random effects model here has "type", "motivation" and "gender" as explantory variables in addition to variables in the fixed effects model.
+- The adjusted R-square in both models are approximately the same.
+
+
+
+
+## 4E
+```{r}
+# Use a Hausman test to test whether the additional exogeneity assumption is violated.
+# H0 : Both fixed and random effects models can be used.
+# (the exogeneity assumption in the random effects model is not violated).
+# HA : One of the models is inconsistent. 
+# (the random effects model is inconsistent, since the fixed effects model does not have the 
+# exogeneity assumption).
+
+phtest(modelFixed1, modelRandom1)
+```
+
+
+**Comment:**
+- As the p-value is 1, higher than 0.05, we accept the H0. 
+- The exogeneity assumption in the random effects model is not violated. The random effects model is consistent and can be used.
+
+
+## 4F
+
+There is an unaccounted property in the panel data estimation compared to the models in previous questions. It lacks lagged dependent and independent variables in the model. This can cause bias, because it does not really consider the impacts of lagged values on the values at time t.
+
+
+# QUESTION 5
+
+## 5A
+
+```{r}
+# Create binary series
+df_Game$largeSpending <- ifelse(df_Game$spending > 450, 1, 0)
+```
+
+```{r}
+# Select the player with the equal number of high and low monthly spendings
+# So that we have balanced category for dependent variable
+library(dplyr)
+
+df_Count <- df_Game %>% 
+  group_by(playerindex) %>%
+  summarize(sum = sum(largeSpending))
+df_Count %>% filter(sum == 60)
+```
+
+We can choose player 121 as a representative player because that player has 60 months with high spendings and 60 months with low spendings.
+
+## 5B
+
+```{r}
+# Create data frame for player 121
+df_Gamer121 <-  df_Game[which(df_Game$playerindex == 121), ]
+df_Gamer121$largeSpending <- as.factor(df_Gamer121$largeSpending)
+```
+
+
+```{r, warning = FALSE}
+# Find starting points
+beta0 <- lm(df_Gamer121$largeSpending ~ df_Gamer121$income + df_Gamer121$genre + 
+              df_Gamer121$dummydecember + df_Gamer121$age - 1)$coef
+
+beta0
+```
+
+```{r, warning = FALSE}
+# Use the glm function to estimate the logit model
+modelLogit <- glm(largeSpending ~ income + genre + dummydecember + age - 1, 
+                  family=binomial(link='logit'), start = beta0, data = df_Gamer121)
+
+logLik(modelLogit)
+modelLogit$coefficients 
+summary(modelLogit)
+```
+
+**Comment:**
+- The variables in the model have statistically significant impacts on predicting the binary spending are income and age. Because we only have several few significant levels of genres, we cannot conclude that there is significant impact of different genres in predicting the binary spending here.
+- Income is associated with higher log odds of large spending (gamer's success). This is in line with question 2, where the higher the income is, the higher the monthly spending on game of player1 is, keeping others unchanged.
+- The effects of age here is positive. The older the player is, the higher the log odds that she/he spends more than 450 per month. This is only in line with player500, but different from the player1 in question 3.
+- Among the genres of games played, misc leads to higher log odds of large spending than simulation, followed by puzzle. Compared to player1 in question2, the impacts of these 3 genres are similar, playing misc is associated with higher spending than simulation, then puzzle.
+- Interestingly, the monthly spending in December does not lead to higher log odds of large spending compared to other months, keeping others constant. This is not in line with the results in question 2, where December is positively associated with spending. This may result from the choice of threshold at 450, which is not yet a good cut off for player121 to differentiate between high spending in December versus other months.
+
+
+## 5C
+
+```{r, warning = FALSE}
+# Build the prediction probabilities
+predDataLogit <- predict(modelLogit, df_Gamer121, type = "response", se.fit = TRUE)
+upr <- predDataLogit$fit + predDataLogit$se.fit*1.96 # upper bounds
+lwr <- predDataLogit$fit - predDataLogit$se.fit*1.96 # lower bounds
+fit <- predDataLogit$fit
+
+# We plot the probabilities in an ascending order so that it is easier for comparison later
+plotCI(predDataLogit$fit[order(predDataLogit$fit)], 
+       ui = upr[order(predDataLogit$fit)], li = lwr[order(predDataLogit$fit)])
+```
+
+
+```{r, warning = FALSE}
+# To estimate the accuracy of predicted probabilities
+# We should see 2 plots side by side: probabilities and real spending of gamer 121
+
+par(mfrow=c(1,2))
+    
+plotCI(predDataLogit$fit[order(predDataLogit$fit)], ui = upr[order(predDataLogit$fit)], 
+       li = lwr[order(predDataLogit$fit)], col = "brown")
+abline(h=0.5)
+
+plot(df_Gamer121$spending[order(predDataLogit$fit)], col = "blue")
+abline(h = 450)
+```
+
+**Comment:** As can be seen in the graphs, the probabilities estimated are mostly accurate. The higher the probabilities are corresponding to the higher spendings.
+
+
+
+## 5D
+
+- Although the logit model gives us the log odds which are nice to obtain, the choice of threshold can make the model biased to an extent.
+- Compare to the results in question 4, here we also obtain the positive effects of income and positive effects of age on spending. However, we do not see the impacts of genre and dummydecember. This can result from the fact that the dependent variable is in binary form with a threshold of spending at 450.
+- For example, dummydecember increases spending, but it is not necessarily more likely to upscale the spending from below threshold to pass the threshold compared to other months.
+- The same logic can be applied to genre. Compared to question 2, where we also apply modelling for one player, but in that case, the dependent variable is continuous, so the effect can be more easily detected than this binary outcome.
+- Also, the lagged variables are not included in this model. Including lagged spending can increase the accuracy and fitness of the model.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
